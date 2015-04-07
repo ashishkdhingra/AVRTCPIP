@@ -9,15 +9,19 @@
 #include "SPI.h"
 #include "enc28J60.h"
 #include "Timer.h"
+#include <avr/pgmspace.h>
 
 void ENC28J60_MAC_Init(void); 	//creates initialization function
 void ENC28J60_ETHERNET_Init(void);
-
+void ENC28J60_MAC_ADDRESS_Init(void);
+const unsigned char PROG_cmy_mac[6] PROGMEM={0x00,0x04,0xA3,0x03,0x04,0x05}; //00 04 A3 is the OUI for microchip that can be read from the PHID registers if needed
+	
 
 typedef enum  {idle, ready_to_send, S2A, S2B, S2C, S2D, S3, complete} enc28j60_comm_states;
 //defines for the flags
 // set this if the register is a 2 byte read reg. Otherwise clear it for a 3 byte register read (MAC and MII & PHY regs)
 #define TWO_BYTE_REG_READ 0x80
+#define ENC28J60_BUF_SIZE 10;
 
 typedef struct
 {
@@ -31,7 +35,7 @@ volatile enc28j60_comm_struct enc28j60_comm_data; // global variable for the enc
 uint8_t enc28J60_buffer[5]; 
 
 
-uint8_t enc28j60_comm_run_state(void)
+uint8_t ENC28J60_comm_run_state(void)
 {
 	uint8_t iret_val = 0;
 	switch (enc28j60_comm_data.state)
@@ -68,7 +72,7 @@ uint8_t enc28j60_comm_run_state(void)
 			break;
 			
 		case S3: // state used for enc28j60 data memory access
-		
+					
 			break;
 		case complete:
 			// ENC28J60_PORT|=(1<<ENC28J60_CS);	can not be put here. This would terminate a data transfer! Must be placed in the release function
@@ -133,6 +137,62 @@ uint8_t ENC28J60_read_register(uint8_t reg)	//takes the register location argume
 		}
 
 		ret_val=1;
+	}
+	return ret_val;
+}
+
+/** 
+ * function ENC28J60_read_data
+ * \brief reads the enc28J60 data memory from the current read pointer.
+ *
+ * This function may be used to read data from the ENC28J60 memory. Auto increment is assumed
+ *  to be configured.
+ * \param[in] len the number of bytes to request to read
+ * \param[in] data pointer to the data to use for spi data
+ *
+ * return: number of bytes sent to read.
+ *
+ *****************************************************************************/
+uint8_t ENC28J60_read_data(uint8_t len, uint8_t * data)	
+{ 
+	uint8_t ret_val=0;
+	if (enc28j60_comm_data.state == ready_to_send) { // first time for reading data
+		enc28J60_buffer[0]=READ_BUFF_MEM;
+		if (spi_TXRX_data(1,enc28J60_buffer)) { 
+			ret_val=spi_TXRX_data(len, enc28J60_buffer); // this erases the data read back during the READ_BUF_MEM
+														 // so no need to skip the first byte on a read.
+		}
+	}
+	if ((enc28j60_comm_data.state==complete)) { // repeat reads
+		ret_val=spi_TXRX_data(len, enc28J60_buffer);
+	}
+	return ret_val;
+}
+
+/** 
+ * function ENC28J60_write_data
+ * \brief reads the enc28J60 data memory from the current read pointer.
+ *
+ * This function may be used to read data from the ENC28J60 memory. Auto increment is assumed
+ *  to be configured.
+ * \param[in] len the number of bytes to request to write
+ * \param[in] data pointer to the data to use for spi data
+ *
+ * return: number of bytes sent to write.
+ *
+ *****************************************************************************/
+uint8_t ENC28J60_write_data(uint8_t len, uint8_t * data)	
+{
+	uint8_t ret_val=0;
+	if (enc28j60_comm_data.state == ready_to_send) { // first time for reading data
+		enc28J60_buffer[0]=WRITE_BUFF_MEM;
+		if (spi_TXRX_data(1,enc28J60_buffer)) {
+			ret_val=spi_TXRX_data(len, enc28J60_buffer); // this erases the data read back during the READ_BUF_MEM
+			// so no need to skip the first byte on a read.
+		}
+	}
+	if ((enc28j60_comm_data.state==complete)) { // repeat reads
+		ret_val=spi_TXRX_data(len, enc28J60_buffer);
 	}
 	return ret_val;
 }
@@ -323,6 +383,51 @@ void ENC28J60_MAC_Init(void)
 	 while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
 	 ENC28J60_PORT|=(1<<ENC28J60_CS); 
  }
+ void ENC28J60_MAC_ADDRESS_Init(void)
+{
+	//store MAADR1
+	ENC28J60_PORT&=~(1<<ENC28J60_CS);
+	SPI_DATA_REG=(WRITE_CTRL_REG|(0x1F & MAADR1));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	SPI_DATA_REG=pgm_read_byte(&(PROG_cmy_mac[5]));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	ENC28J60_PORT|=(1<<ENC28J60_CS);
+	//store MAADR2
+	ENC28J60_PORT&=~(1<<ENC28J60_CS);
+	SPI_DATA_REG=(WRITE_CTRL_REG|(0x1F & MAADR2));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	SPI_DATA_REG=pgm_read_byte(&(PROG_cmy_mac[4]));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	ENC28J60_PORT|=(1<<ENC28J60_CS);
+	//store MAADR3
+	ENC28J60_PORT&=~(1<<ENC28J60_CS);
+	SPI_DATA_REG=(WRITE_CTRL_REG|(0x1F & MAADR3));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	SPI_DATA_REG=pgm_read_byte(&(PROG_cmy_mac[3]));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	ENC28J60_PORT|=(1<<ENC28J60_CS);
+	//store MAADR4
+	ENC28J60_PORT&=~(1<<ENC28J60_CS);
+	SPI_DATA_REG=(WRITE_CTRL_REG|(0x1F & MAADR4));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	SPI_DATA_REG=pgm_read_byte(&(PROG_cmy_mac[2]));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	ENC28J60_PORT|=(1<<ENC28J60_CS);
+	//store MAADR5
+	ENC28J60_PORT&=~(1<<ENC28J60_CS);
+	SPI_DATA_REG=(WRITE_CTRL_REG|(0x1F & MAADR5));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	SPI_DATA_REG=pgm_read_byte(&(PROG_cmy_mac[1]));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	ENC28J60_PORT|=(1<<ENC28J60_CS);
+	//store MAADR6
+	ENC28J60_PORT&=~(1<<ENC28J60_CS);
+	SPI_DATA_REG=(WRITE_CTRL_REG|(0x1F & MAADR6));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	SPI_DATA_REG=pgm_read_byte(&(PROG_cmy_mac[0]));
+	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
+	ENC28J60_PORT|=(1<<ENC28J60_CS);
+}
 /** 
  * function ENC28J60_init
  * \brief Initialization of the enc28J60
@@ -338,7 +443,7 @@ void ENC28J60_init(uint16_t RXsize, uint16_t TXsize, uint8_t Broadcast)
 {
 	// Initialize the ENC28J60 for the following set up
 	SPCR &= ~(1<<SPIE);//turn off SPI interrupts for now
-	enc28j60_soft_reset(); 
+	ENC28J60_soft_reset(); 
 	ENC28J60_MAC_Init();
 	ENC28J60_ETHERNET_Init();
 	enc28j60_comm_data.state=idle;
@@ -410,7 +515,22 @@ uint8_t ENC28J60_coms_attach(void)
 	return ret_val;
 }
 
-void enc28j60_soft_reset(void)
+/** 
+ * function enc28J60_check_complete
+ * \brief checks if the enc28j60 state diagram is in the complete state.
+ *
+ * checks if the enc28j60 state diagram is in the complete state.
+ *
+ * returns 1 if in the complete state and 0 if not.
+  */
+uint8_t ENC28J60_check_complete(void)
+{
+	uint8_t ret_val=0;
+	if (enc28j60_comm_data.state==complete) ret_val=1;
+	return ret_val;
+}
+
+void ENC28J60_soft_reset(void)
 {
 	SPDR = SYS_RESET_CMD; 
 	while(!(SPSR & (1<<SPIF))); // do not care about blocking in the initialization routines.
